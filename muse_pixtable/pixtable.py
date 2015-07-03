@@ -1,8 +1,9 @@
 from astropy.io import fits
 import numpy
 
-class Pixtable:
+prefix = 'ESO DRS MUSE PIXTABLE'
 
+class Pixtable:
     def __init__(self, hdulist):
         self.hdulist = hdulist
         
@@ -55,16 +56,32 @@ class Pixtable:
         return ((self.origin >> 11) & 0x1fff) - 1
 
     @property
+    def exposure(self):
+        exp = numpy.zeros(shape=(len(self)), dtype=numpy.int)
+        try:
+            nexp = self.header['{0} COMBINED'.format(prefix)]
+        except KeyError:
+            return exp
+        for i in range(nexp):
+            try:
+                lo = self.header['{0} EXP{1} FIRST'.format(prefix, i+1)]
+                hi = self.header['{0} EXP{1} LAST'.format(prefix, i+1)]
+                exp[lo:hi + 1] = i+1
+            except KeyError:
+                pass
+        return exp
+
+    @property
     def header(self):
         return self.hdulist[0].header
     
     @property
     def flux_calibrated(self):
-        return pt.hdulist[0].header.get('ESO DRS MUSE PIXTABLE FLUXCAL', False)
+        return pt.hdulist[0].header.get('{0} FLUXCAL'.format(prefix), False)
 
     @property
     def sky_subtracted(self):
-        return pt.hdulist[0].header.get('ESO DRS MUSE PIXTABLE SKYSUB', False)
+        return pt.hdulist[0].header.get('{0} SKYSUB'.format(prefix), False)
 
     def spectral_slab(self, lo, hi):
         '''Extract a new pixtable between two spectral coordinates'''
@@ -131,10 +148,8 @@ class Pixtable:
             slices.sort()
             try:
                 xoffsets = numpy.copy([
-                        pt.header[
-                            'HIERARCH ESO DRS MUSE PIXTABLE '+
-                            'EXP0 IFU%02i SLICE%02i XOFFSET' 
-                            % (ifu, ss)] for ss in s
+                        pt.header['{0} EXP0 IFU{1:02i} SLICE{2:02i} XOFFSET'
+                                  .format(prefix, ifu, ss)] for ss in s
                         ])
             except KeyError:
                 mx = numpy.copy([ max(x[s == ss]) - min(x[s == ss]) 
