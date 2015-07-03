@@ -6,7 +6,7 @@ prefix = 'ESO DRS MUSE PIXTABLE'
 class Pixtable:
     def __init__(self, hdulist):
         self.hdulist = hdulist
-        
+
     @staticmethod
     def read(fname):
         return Pixtable(fits.open(fname))
@@ -58,11 +58,7 @@ class Pixtable:
     @property
     def exposure(self):
         exp = numpy.zeros(shape=(len(self)), dtype=numpy.int)
-        try:
-            nexp = self.header['{0} COMBINED'.format(prefix)]
-        except KeyError:
-            return exp
-        for i in range(nexp):
+        for i in range(self.header.get('{0} COMBINED'.format(prefix), 0)):
             try:
                 lo = self.header['{0} EXP{1} FIRST'.format(prefix, i+1)]
                 hi = self.header['{0} EXP{1} LAST'.format(prefix, i+1)]
@@ -77,11 +73,11 @@ class Pixtable:
     
     @property
     def flux_calibrated(self):
-        return pt.hdulist[0].header.get('{0} FLUXCAL'.format(prefix), False)
+        return self.hdulist[0].header.get('{0} FLUXCAL'.format(prefix), False)
 
     @property
     def sky_subtracted(self):
-        return pt.hdulist[0].header.get('{0} SKYSUB'.format(prefix), False)
+        return self.hdulist[0].header.get('{0} SKYSUB'.format(prefix), False)
 
     def spectral_slab(self, lo, hi):
         '''Extract a new pixtable between two spectral coordinates'''
@@ -89,8 +85,10 @@ class Pixtable:
 
     def ifu_slab(self, ifu, slc=None):
         '''Extract pixtable limited to an IFU and optionally slice'''
-        return self[((self.ifu == ifu) if ifu is not None else True) &
-                    ((self.slice == slc) if slc is not None else True)]
+        mask = self.ifu == ifu
+        if slc is not None:
+            mask &= self.slice == slc
+        return mask
 
     def write(self, fname, overwrite = False):
         '''Write pixtable to a file'''
@@ -99,9 +97,9 @@ class Pixtable:
     @property
     def columns(self):
         if isinstance(self.hdulist[1], fits.ImageHDU):
-            return [ hdu.name for hdu in self.hdulist[1:] ]
+            return [hdu.name for hdu in self.hdulist[1:]]
         else:
-            return [ col.name for col in self.hdulist[1].columns ]
+            return [col.name for col in self.hdulist[1].columns]
 
     def __getitem__(self, item):
         if isinstance(item, (str, unicode)):
@@ -110,10 +108,26 @@ class Pixtable:
             else:
                 return self.hdulist[1].data[item]
         elif isinstance(item, (slice, numpy.ndarray)):
-            length = len(self)
+            header = fits.Header(self.header)
+            for i in range(header.get('{0} COMBINED'.format(prefix), 0)):
+                del header['{0} EXP{1} FIRST'.format(prefix, i+1)]
+                del header['{0} EXP{1} LAST'.format(prefix, i+1)]
+            try:
+                del header['{0} COMBINED'.format(prefix)]
+            except KeyError:
+                pass
+            exp = self.exposure[item]
+            where = numpy.where(exp[:-1] != exp[1:])[0]
+            if len(where) > 0:
+                header['{0} COMBINED'.format(prefix)] = len(where) + 1
+                header['{0} EXP{1} FIRST'.format(prefix, 1)] = 1
+                header['{0} EXP{1} LAST'.format(prefix, len(where))] = len(exp)
+                for i, l in enumerate(where):
+                    header['{0} EXP{1} LAST'.format(prefix, i + 1)] = l + 1
+                    header['{0} EXP{1} FIRST'.format(prefix, i + 2)] = l + 2
             hdulist = fits.HDUList(
-                [fits.PrimaryHDU(header = self.header)]
-                + [fits.ImageHDU(self[col][item].reshape(-1,1), name = col) 
+                [fits.PrimaryHDU(header = header)]
+                + [fits.ImageHDU(self[col][item].reshape(-1, 1), name = col) 
                    for col in self.columns])
             return Pixtable(hdulist)
         elif isinstance(item, int):
@@ -136,6 +150,8 @@ class Pixtable:
         ("...IFU%02i SLICE%02i XOFFSET"). When this header is missing,
         a spacing is assumed from the data themself.
         '''
+        if len(set(self.exposure)) > 1:
+            raise IllegalArgumentException('More than one exposure!')
         ifus = list(set(self.ifu))
         ifus.sort()
         hdulist = [ fits.PrimaryHDU(header = self.header) ]
