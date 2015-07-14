@@ -109,6 +109,7 @@ class Pixtable:
                 return self.hdulist[1].data[item]
         elif isinstance(item, (slice, numpy.ndarray)):
             header = fits.Header(self.header)
+            # remove old headers with exposure row information
             for i in range(header.get('{0} COMBINED'.format(prefix), 0)):
                 del header['{0} EXP{1} FIRST'.format(prefix, i+1)]
                 del header['{0} EXP{1} LAST'.format(prefix, i+1)]
@@ -116,7 +117,29 @@ class Pixtable:
                 del header['{0} COMBINED'.format(prefix)]
             except KeyError:
                 pass
-            exp = self.exposure[item]
+            exp = self.exposure
+            n_exp = exp[-1]+1
+            exp = exp[item]
+            exp_set = set(exp)
+
+            # rename exposure dependent headers to new exposure numbers
+            j = 0
+            for i in range(n_exp):
+                rename = i in exp_set
+                if rename:
+                    j += 1
+                    if i + 1 == j:
+                        continue
+                for k in header:
+                    if '{0} EXP{1} '.format(prefix, i) in k:
+                        if rename:
+                            k0 = k.replace('{0} EXP{1} '.format(prefix, i),
+                                           '{0} EXP{1} '.format(prefix, j))
+                            header.rename_keyword(k, k0)
+                        else:
+                            del header[k]
+
+            # update headers with exposure row information
             where = numpy.where(exp[:-1] != exp[1:])[0]
             if len(where) > 0:
                 header['{0} COMBINED'.format(prefix)] = len(where) + 1
